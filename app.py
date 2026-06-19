@@ -1,16 +1,34 @@
 import os
 import logging
+import sqlite3
 from flask import Flask, render_template, redirect, url_for, flash, request
 from flask_wtf import FlaskForm
 from wtforms import StringField, PasswordField, SubmitField
-from wtforms.validators import DataRequired, Length
+from wtforms.validators import DataRequired, Length, EqualTo
 from flask_wtf.csrf import CSRFProtect
+from flask_bcrypt import Bcrypt
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.urandom(24)
 csrf = CSRFProtect(app)
+bcrypt = Bcrypt(app)
 
-# Configuration for Isolated Security Logger
+DB_FILE = "users.db"
+
+# --- Database Initialization ---
+def init_db():
+    with sqlite3.connect(DB_FILE) as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL
+            )
+        ''')
+        conn.commit()
+
+# --- Isolated Security Logger Setup ---
 security_logger = logging.getLogger("security_pipeline")
 security_logger.setLevel(logging.INFO)
 security_logger.propagate = False
@@ -20,10 +38,17 @@ security_formatter = logging.Formatter('%(asctime)s [%(levelname)s] IP: %(client
 file_handler.setFormatter(security_formatter)
 security_logger.addHandler(file_handler)
 
+# --- Forms ---
 class LoginForm(FlaskForm):
     username = StringField('Username', validators=[DataRequired(), Length(min=4, max=25)])
     password = PasswordField('Password', validators=[DataRequired()])
     submit = SubmitField('Login')
+
+class RegisterForm(FlaskForm):
+    username = StringField('Username', validators=[DataRequired(), Length(min=4, max=25)])
+    password = PasswordField('Password', validators=[DataRequired(), Length(min=8)])
+    confirm_password = PasswordField('Confirm Password', validators=[DataRequired(), EqualTo('password', message="Passwords must match")])
+    submit = SubmitField('Register')
 
 def log_security_event(level, username, message):
     client_ip = request.remote_addr or "127.0.0.1"
@@ -33,6 +58,8 @@ def log_security_event(level, username, message):
     elif level == "WARNING":
         security_logger.warning(message, extra=extra_data)
 
+# --- Routes ---
+
 @app.route('/', methods=['GET', 'POST'])
 def login():
     form = LoginForm()
@@ -40,11 +67,12 @@ def login():
         username = form.username.data
         password = form.password.data
 
-        # Fetching credentials securely from environment variables
-        SECURE_USER = os.getenv("APP_ADMIN_USER", "admin")
-        SECURE_PASSWORD = os.getenv("APP_ADMIN_PASSWORD")
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT password_hash FROM users WHERE username = ?", (username,))
+            row = cursor.fetchone()
 
-        if username == SECURE_USER and password == SECURE_PASSWORD:
+        if row and bcrypt.check_password_hash(row[0], password):
             log_security_event("INFO", username, "Successful Login Attempt")
             return redirect(url_for('dashboard'))
         else:
@@ -52,9 +80,34 @@ def login():
             flash('Invalid Username or Password', 'danger')
     return render_template('login.html', form=form)
 
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    form = RegisterForm()
+    if form.validate_on_submit():
+        username = form.username.data
+        password = form.password.data
+        
+        # Secure Password Hashing via Bcrypt
+        hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
+
+        try:
+            with sqlite3.connect(DB_FILE) as conn:
+                cursor = conn.cursor()
+                cursor.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", (username, hashed_password))
+                conn.commit()
+            log_security_event("INFO", username, "User Registered Successfully")
+            flash('Account created successfully! You can now log in.', 'success')
+            return redirect(url_for('login'))
+        except sqlite3.IntegrityError:
+            log_security_event("WARNING", username, "Registration Failed - Username Already Exists")
+            flash('Username already exists. Choose a different one.', 'danger')
+
+    return render_template('register.html', form=form)
+
 @app.route('/dashboard')
 def dashboard():
     return "<h1>Welcome to the Secure Admin Dashboard!</h1>"
 
 if __name__ == '__main__':
+    init_db()
     app.run(debug=True, host='0.0.0.0', port=5000)
