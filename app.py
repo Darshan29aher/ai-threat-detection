@@ -1,7 +1,7 @@
 import os
 import logging
 import sqlite3
-from flask import Flask, render_template, redirect, url_for, flash, request
+from flask import Flask, render_template, redirect, url_for, flash, request, session
 from flask_wtf import FlaskForm
 from wtforms import StringField, PasswordField, SubmitField
 from wtforms.validators import DataRequired, Length, EqualTo
@@ -48,7 +48,7 @@ class RegisterForm(FlaskForm):
     username = StringField('Username', validators=[DataRequired(), Length(min=4, max=25)])
     password = PasswordField('Password', validators=[DataRequired(), Length(min=8)])
     confirm_password = PasswordField('Confirm Password', validators=[DataRequired(), EqualTo('password', message="Passwords must match")])
-    admin_key = PasswordField('Admin Registration Key (Optional)') # Added field for restriction
+    admin_key = PasswordField('Admin Registration Key (Optional)')
     submit = SubmitField('Register')
 
 def log_security_event(level, username, message):
@@ -75,6 +75,7 @@ def login():
 
         if row and bcrypt.check_password_hash(row[0], password):
             log_security_event("INFO", username, "Successful Login Attempt")
+            session['user'] = username  # Establish stateful session tracking
             return redirect(url_for('dashboard'))
         else:
             log_security_event("WARNING", username, "Failed Login Attempt - Invalid Credentials")
@@ -89,17 +90,14 @@ def register():
         password = form.password.data
         admin_key_input = form.admin_key.data
         
-        # Define the system's secret admin registration token via Environment Variable
         SECRET_REG_KEY = os.getenv("ADMIN_REGISTRATION_KEY", "SuperSecretKey999!")
 
-        # RESTRICTION LOGIC: If trying to register as admin, validate the key
         if username.lower() == "admin":
             if admin_key_input != SECRET_REG_KEY:
                 log_security_event("WARNING", username, "Unauthorized Registration Attempt - Invalid Secret Key")
                 flash('Unauthorized! A valid Admin Registration Key is required to create an admin account.', 'danger')
                 return render_template('register.html', form=form)
 
-        # Secure Password Hashing via Bcrypt
         hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
 
         try:
@@ -118,7 +116,18 @@ def register():
 
 @app.route('/dashboard')
 def dashboard():
-    return "<h1>Welcome to the Secure Admin Dashboard!</h1>"
+    if 'user' not in session:
+        flash('Please log in to access the dashboard.', 'danger')
+        return redirect(url_for('login'))
+    return render_template('dashboard.html', username=session['user'])
+
+@app.route('/logout')
+def logout():
+    username = session.get('user', 'Anonymous')
+    session.pop('user', None)  # Completely clear user token context
+    log_security_event("INFO", username, "User Logged Out Successfully")
+    flash('You have been logged out safely.', 'info')
+    return redirect(url_for('login'))
 
 if __name__ == '__main__':
     init_db()
