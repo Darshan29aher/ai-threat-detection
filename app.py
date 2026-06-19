@@ -10,6 +10,7 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.urandom(24)
 csrf = CSRFProtect(app)
 
+# Configuration for Isolated Security Logger
 security_logger = logging.getLogger("security_pipeline")
 security_logger.setLevel(logging.INFO)
 security_logger.propagate = False
@@ -38,8 +39,12 @@ def login():
     if form.validate_on_submit():
         username = form.username.data
         password = form.password.data
-        
-        if username == "admin" and password == "SuperSecurePassword123!":
+
+        # Fetching credentials securely from environment variables
+        SECURE_USER = os.getenv("APP_ADMIN_USER", "admin")
+        SECURE_PASSWORD = os.getenv("APP_ADMIN_PASSWORD")
+
+        if username == SECURE_USER and password == SECURE_PASSWORD:
             log_security_event("INFO", username, "Successful Login Attempt")
             return redirect(url_for('dashboard'))
         else:
