@@ -33,17 +33,16 @@ pipeline {
             }
         }
 
-        stage('OWASP ZAP DAST Scan') {
+stage('OWASP ZAP DAST Scan') {
             steps {
                 echo 'Running ZAP baseline scan against OWASP Juice Shop...'
                 sh '''
                     docker run --rm \
-                      -v $(pwd):/zap/wrk/:rw \
+                      --network host \
+                      -v ${WORKSPACE}:/zap/wrk/:rw \
                       -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
                       -t http://127.0.0.1:3000 \
                       -r zap_report.html || true
                 '''
             }
         }
-    }
-}
