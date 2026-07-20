@@ -33,7 +33,7 @@ pipeline {
             }
         }
 
-stage('OWASP ZAP DAST Scan') {
+        stage('OWASP ZAP DAST Scan') {
             steps {
                 echo 'Running ZAP baseline scan against OWASP Juice Shop...'
                 sh '''
@@ -46,3 +46,5 @@ stage('OWASP ZAP DAST Scan') {
                 '''
             }
         }
+    }
+}
