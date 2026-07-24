@@ -28,8 +28,14 @@ pipeline {
 
         stage('Trivy Image Scan') {
             steps {
-                echo 'Scanning Flask app image for vulnerabilities...'
-                sh 'trivy image secure-flask-app:latest || true'
+                echo 'Scanning Flask app image and generating JSON report...'
+                // Generate Trivy output in JSON format
+                sh 'trivy image --format json -o trivy-report.json secure-flask-app:latest || true'
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'trivy-report.json', allowEmptyArchive: true
+                }
             }
         }
 
@@ -37,7 +43,6 @@ pipeline {
             steps {
                 script {
                     def dockerNetwork = "bridge"
-                    // Target DVWA exposed on host port 8081 via default bridge gateway
                     def dvwaUrl = "http://172.17.0.1:8081" 
 
                     echo "Starting OWASP ZAP scan against DVWA at ${dvwaUrl}..."
