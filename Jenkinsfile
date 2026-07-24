@@ -36,7 +36,7 @@ pipeline {
         stage('OWASP ZAP Dynamic Scan - DVWA') {
             steps {
                 script {
-                    // Jenkins will show a prompt in the build UI asking for your session cookie
+                    // Jenkins will show an interactive prompt in the build UI
                     def phpSessId = input(
                         id: 'dvwaCookie', 
                         message: 'Enter DVWA Session Cookie', 
@@ -44,14 +44,16 @@ pipeline {
                             string(
                                 name: 'PHPSESSID', 
                                 defaultValue: '', 
-                                description: 'Log into DVWA in browser, open F12 -> Application/Storage -> Cookies, and paste your PHPSESSID value here.'
+                                description: 'Log into DVWA in browser, open F12 -> Storage/Application -> Cookies, and paste your PHPSESSID value here.'
                             )
                         ]
                     )
 
                     def dockerNetwork = "bridge"
                     def dvwaUrl = "http://172.17.0.1:8081"
-                    def cookieHeader = phpSessId ? "security=low; PHPSESSID=${phpSessId}" : "security=low"
+                    
+                    // Format cookie header using the clean -H flag
+                    def cookieHeader = phpSessId ? "Cookie: security=low; PHPSESSID=${phpSessId}" : "Cookie: security=low"
 
                     echo "Starting OWASP ZAP scan against DVWA at ${dvwaUrl}..."
 
@@ -61,7 +63,7 @@ pipeline {
                       -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
                       -t ${dvwaUrl} \
                       -m 2 \
-                      -z "-config replacer.full_list(0).description=Cookie -config replacer.full_list(0).enabled=true -config replacer.full_list(0).matchtype=REQ_HEADER -config replacer.full_list(0).header=Cookie -config replacer.full_list(0).replacement='${cookieHeader}'" \
+                      -H "${cookieHeader}" \
                       -r zap_dvwa_report.html \
                       -I || true
                     """
@@ -73,5 +75,5 @@ pipeline {
                 }
             }
         }
-    } // Closes stages
-}     // Closes pipeline
+    }
+}
