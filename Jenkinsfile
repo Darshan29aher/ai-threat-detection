@@ -3,6 +3,7 @@ pipeline {
 
     environment {
         SONAR_SCANNER_HOME = tool 'SonarScanner'
+        TARGET_DIR = '/home/iacsd/ai-threat-detection'
     }
 
     stages {
@@ -29,7 +30,6 @@ pipeline {
         stage('Trivy Image Scan') {
             steps {
                 echo 'Scanning Flask app image and generating JSON report...'
-                // Generate Trivy output in JSON format
                 sh 'trivy image --format json -o trivy-report.json secure-flask-app:latest || true'
             }
             post {
@@ -62,6 +62,17 @@ pipeline {
                     archiveArtifacts artifacts: 'zap_dvwa_report.html', allowEmptyArchive: true
                 }
             }
+        }
+    }
+
+    post {
+        always {
+            echo "Automating report backup to ${TARGET_DIR}..."
+            sh """
+                mkdir -p ${TARGET_DIR}
+                cp -f trivy-report.json ${TARGET_DIR}/ 2>/dev/null || true
+                cp -f zap_dvwa_report.html ${TARGET_DIR}/ 2>/dev/null || true
+            """
         }
     }
 }
