@@ -19,7 +19,7 @@ pipeline {
                     sh """
                         ${SONAR_SCANNER_HOME}/bin/sonar-scanner \
                         -Dsonar.projectKey=ai-threat-detection \
-                        -Dsonar.sources=. \
+                        -Dsonar.sources=app.py,templates \
                         -Dsonar.host.url=http://127.0.0.1:9000
                     """
                 }
