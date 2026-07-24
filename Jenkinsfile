@@ -1,69 +1,51 @@
-pipeline {
-    agent any
+stage('OWASP ZAP Dynamic Scan - DVWA') {
+    steps {
+        script {
 
-    environment {
-        SONAR_SCANNER_HOME = tool 'SonarScanner'
+            // Prompt user for DVWA session ID
+            def phpSessId = input(
+                id: 'dvwaCookie',
+                message: 'Enter DVWA PHPSESSID',
+                parameters: [
+                    string(
+                        name: 'PHPSESSID',
+                        defaultValue: '',
+                        description: 'Login to DVWA and copy the PHPSESSID cookie value.'
+                    )
+                ]
+            )
+
+            def dockerNetwork = "bridge"
+            def dvwaUrl = "http://172.17.0.1:8081"
+
+            // Build Cookie header
+            def cookieHeader = "security=low; PHPSESSID=${phpSessId}"
+
+            echo "Using Cookie: ${cookieHeader}"
+            echo "Starting authenticated OWASP ZAP scan..."
+
+            sh """
+            docker run --rm \
+              --network ${dockerNetwork} \
+              -v \$(pwd):/zap/wrk/:rw \
+              ghcr.io/zaproxy/zaproxy:stable \
+              zap-baseline.py \
+              -t ${dvwaUrl} \
+              -m 2 \
+              -z "-config replacer.full_list(0).description=DVWA_Cookie \
+                  -config replacer.full_list(0).enabled=true \
+                  -config replacer.full_list(0).matchtype=REQ_HEADER \
+                  -config replacer.full_list(0).header=Cookie \
+                  -config replacer.full_list(0).replacement=\\"${cookieHeader}\\"" \
+              -r zap_dvwa_report.html \
+              -I || true
+            """
+        }
     }
 
-    stages {
-
-        stage('Checkout Code') {
-            steps {
-                echo 'Checking out source code...'
-                checkout scm
-            }
-        }
-
-        stage('SonarQube Code Analysis') {
-            steps {
-                withSonarQubeEnv('SonarQube-Server') {
-                    sh """
-                        ${SONAR_SCANNER_HOME}/bin/sonar-scanner \
-                        -Dsonar.projectKey=ai-threat-detection \
-                        -Dsonar.sources=. \
-                        -Dsonar.host.url=http://127.0.0.1:9000
-                    """
-                }
-            }
-        }
-
-        stage('Trivy Image Scan') {
-            steps {
-                echo 'Scanning Flask app image for vulnerabilities...'
-                sh 'trivy image secure-flask-app:latest || true'
-            }
-        }
-
-        // Updated OWASP ZAP Authenticated Scan
-        stage('OWASP ZAP Dynamic Scan - DVWA') {
-            steps {
-                script {
-                    def dockerNetwork = "bridge"
-                    def dvwaUrl = "http://172.17.0.1:8081"
-
-                    echo "Starting OWASP ZAP scan against DVWA (Authenticated)..."
-
-                    sh """
-                    docker run --rm --network ${dockerNetwork} \
-                      -v \$(pwd):/zap/wrk/:rw \
-                      -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
-                      -t ${dvwaUrl} \
-                      -m 2 \
-                      -z "-config replacer.full_list(0).description=DVWA_Cookie \
-                          -config replacer.full_list(0).enabled=true \
-                          -config replacer.full_list(0).matchtype=REQ_HEADER \
-                          -config replacer.full_list(0).header=Cookie \
-                          -config replacer.full_list(0).replacement=\\"security=low; PHPSESSID=1\\"" \
-                      -r zap_dvwa_report.html \
-                      -I || true
-                    """
-                }
-            }
-            post {
-                always {
-                    archiveArtifacts artifacts: 'zap_dvwa_report.html', allowEmptyArchive: true
-                }
-            }
+    post {
+        always {
+            archiveArtifacts artifacts: 'zap_dvwa_report.html', allowEmptyArchive: true
         }
     }
 }
