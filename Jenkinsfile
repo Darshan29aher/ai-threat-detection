@@ -33,17 +33,29 @@ pipeline {
             }
         }
 
-        stage('OWASP ZAP DAST Scan') {
+        stage('OWASP ZAP Dynamic Scan - DVWA') {
             steps {
-                echo 'Running ZAP baseline scan against OWASP Juice Shop...'
-                sh '''
-                    docker run --rm \
-                      --network host \
-                      -v ${WORKSPACE}:/zap/wrk/:rw \
+                script {
+                    def dockerNetwork = "bridge"
+                    // Target DVWA exposed on host port 8081 via default bridge gateway
+                    def dvwaUrl = "http://172.17.0.1:8081" 
+
+                    echo "Starting OWASP ZAP scan against DVWA at ${dvwaUrl}..."
+
+                    sh """
+                    docker run --rm --network ${dockerNetwork} \
+                      -v \$(pwd):/zap/wrk/:rw \
                       -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
-                      -t http://127.0.0.1:3000 \
-                      -r zap_report.html || true
-                '''
+                      -t ${dvwaUrl} \
+                      -r zap_dvwa_report.html \
+                      -I || true
+                    """
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'zap_dvwa_report.html', allowEmptyArchive: true
+                }
             }
         }
     }
