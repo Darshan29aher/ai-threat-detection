@@ -6,6 +6,7 @@ pipeline {
     }
 
     stages {
+
         stage('Checkout Code') {
             steps {
                 echo 'Checking out source code...'
@@ -33,20 +34,26 @@ pipeline {
             }
         }
 
+        // Updated OWASP ZAP Authenticated Scan
         stage('OWASP ZAP Dynamic Scan - DVWA') {
             steps {
                 script {
                     def dockerNetwork = "bridge"
-                    // Target DVWA exposed on host port 8081 via default bridge gateway
-                    def dvwaUrl = "http://172.17.0.1:8081" 
+                    def dvwaUrl = "http://172.17.0.1:8081"
 
-                    echo "Starting OWASP ZAP scan against DVWA at ${dvwaUrl}..."
+                    echo "Starting OWASP ZAP scan against DVWA (Authenticated)..."
 
                     sh """
                     docker run --rm --network ${dockerNetwork} \
                       -v \$(pwd):/zap/wrk/:rw \
                       -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
                       -t ${dvwaUrl} \
+                      -m 2 \
+                      -z "-config replacer.full_list(0).description=DVWA_Cookie \
+                          -config replacer.full_list(0).enabled=true \
+                          -config replacer.full_list(0).matchtype=REQ_HEADER \
+                          -config replacer.full_list(0).header=Cookie \
+                          -config replacer.full_list(0).replacement=\\"security=low; PHPSESSID=1\\"" \
                       -r zap_dvwa_report.html \
                       -I || true
                     """
