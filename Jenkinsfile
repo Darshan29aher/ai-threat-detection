@@ -36,24 +36,9 @@ pipeline {
         stage('OWASP ZAP Dynamic Scan - DVWA') {
             steps {
                 script {
-                    // Jenkins will show an interactive prompt in the build UI
-                    def phpSessId = input(
-                        id: 'dvwaCookie', 
-                        message: 'Enter DVWA Session Cookie', 
-                        parameters: [
-                            string(
-                                name: 'PHPSESSID', 
-                                defaultValue: '', 
-                                description: 'Log into DVWA in browser, open F12 -> Storage/Application -> Cookies, and paste your PHPSESSID value here.'
-                            )
-                        ]
-                    )
-
                     def dockerNetwork = "bridge"
-                    def dvwaUrl = "http://172.17.0.1:8081"
-                    
-                    // Format cookie header using the clean -H flag
-                    def cookieHeader = phpSessId ? "Cookie: security=low; PHPSESSID=${phpSessId}" : "Cookie: security=low"
+                    // Target DVWA exposed on host port 8081 via default bridge gateway
+                    def dvwaUrl = "http://172.17.0.1:8081" 
 
                     echo "Starting OWASP ZAP scan against DVWA at ${dvwaUrl}..."
 
@@ -62,8 +47,6 @@ pipeline {
                       -v \$(pwd):/zap/wrk/:rw \
                       -t ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \
                       -t ${dvwaUrl} \
-                      -m 2 \
-                      -H "${cookieHeader}" \
                       -r zap_dvwa_report.html \
                       -I || true
                     """
