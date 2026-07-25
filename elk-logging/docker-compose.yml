@@ -10,6 +10,8 @@ services:
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
     ports:
       - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data  # <--- Persists Kibana dashboards and index data
     networks:
       - logging-net
 
@@ -42,3 +44,7 @@ services:
 networks:
   logging-net:
     driver: bridge
+
+volumes:
+  es_data:
+    driver: local  # <--- Named volume stored permanently on host
