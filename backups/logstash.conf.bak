@@ -8,7 +8,6 @@ filter {
   # Clean up malformed Docker label metadata
   mutate {
     remove_field => [ "[container][labels]" ]
-    remove_tag => [ "beats_input_codec_plain_applied" ]
   }
 
   if [container][name] {

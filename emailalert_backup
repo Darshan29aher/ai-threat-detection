@@ -1,0 +1,207 @@
+import json
+import os
+import smtplib
+from datetime import datetime, timezone, timedelta
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from dotenv import load_dotenv
+from elasticsearch import Elasticsearch
+
+load_dotenv()
+
+es = Elasticsearch(["http://localhost:9200"])
+
+# --- CONFIG: loaded from .env, never hardcoded ---
+SMTP_SERVER = os.getenv("SMTP_SERVER")
+SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+SENDER_EMAIL = os.getenv("SENDER_EMAIL")
+SENDER_APP_PASSWORD = os.getenv("SENDER_APP_PASSWORD")
+RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
+# ---------------------------------------------------
+
+STATE_FILE = "/home/iacsd/ai-threat-detection/last_alert_state.json"
+ATTACK_TAGS = ["xss_attempt", "sqli_attempt", "brute_force_attempt", "csrf_attempt", "lfi_attempt"]
+
+# IST is UTC+5:30 — used ONLY for display; all internal comparisons stay in UTC
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def to_ist_display(utc_timestamp_str):
+    """Convert an ES @timestamp (UTC, e.g. '2026-07-26T15:07:52.198Z') to a readable IST string."""
+    if not utc_timestamp_str:
+        return "N/A"
+    try:
+        ts = utc_timestamp_str.replace("Z", "+00:00")
+        dt_utc = datetime.fromisoformat(ts)
+        dt_ist = dt_utc.astimezone(IST)
+        return dt_ist.strftime("%Y-%m-%d %H:%M:%S IST")
+    except Exception:
+        return utc_timestamp_str  # fallback: show raw value rather than crash
+
+
+def validate_config():
+    missing = [name for name, val in [
+        ("SMTP_SERVER", SMTP_SERVER),
+        ("SENDER_EMAIL", SENDER_EMAIL),
+        ("SENDER_APP_PASSWORD", SENDER_APP_PASSWORD),
+        ("RECIPIENT_EMAIL", RECIPIENT_EMAIL),
+    ] if not val]
+    if missing:
+        raise EnvironmentError(f"Missing required .env variables: {', '.join(missing)}")
+
+
+def get_last_checked_time():
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE, "r") as f:
+            data = json.load(f)
+            return data.get("last_checked")
+    # First run: only look back 5 minutes so it doesn't email your entire history
+    return (datetime.now(timezone.utc).isoformat())
+
+
+def save_last_checked_time(timestamp):
+    with open(STATE_FILE, "w") as f:
+        json.dump({"last_checked": timestamp}, f)
+
+
+def fetch_new_attacks(since_timestamp):
+    query = {
+        "query": {
+            "bool": {
+                "must": [
+                    {"range": {"@timestamp": {"gt": since_timestamp}}}
+                ],
+                "filter": [
+                    {"terms": {"tags.keyword": ATTACK_TAGS}}
+                ]
+            }
+        },
+        "sort": [{"@timestamp": {"order": "asc"}}],
+        "size": 200
+    }
+    response = es.search(index="logstash-*", body=query)
+    return response["hits"]["hits"]
+
+
+def fetch_new_ml_anomalies(since_timestamp):
+    query = {
+        "query": {
+            "bool": {
+                "must": [
+                    {"range": {"@timestamp": {"gt": since_timestamp}}},
+                    {"term": {"ai_detected_anomaly": True}}
+                ]
+            }
+        },
+        "sort": [{"@timestamp": {"order": "asc"}}],
+        "size": 200
+    }
+    response = es.search(index="logstash-*", body=query)
+    return response["hits"]["hits"]
+
+
+def build_html_report(rule_hits, ml_hits):
+    def row(hit, is_ml=False):
+        src = hit["_source"]
+        ts = to_ist_display(src.get("@timestamp"))
+        ip = src.get("client_ip", "N/A")
+        path = src.get("request_path", src.get("message", "N/A"))[:120]
+        tags = ", ".join(t for t in src.get("tags", []) if t != "beats_input_codec_plain_applied") or "-"
+        score = src.get("ai_anomaly_score", "-")
+        return f"""
+        <tr>
+            <td style="padding:6px;border:1px solid #ddd;">{ts}</td>
+            <td style="padding:6px;border:1px solid #ddd;">{ip}</td>
+            <td style="padding:6px;border:1px solid #ddd;">{path}</td>
+            <td style="padding:6px;border:1px solid #ddd;">{tags}</td>
+            <td style="padding:6px;border:1px solid #ddd;">{score if is_ml else '-'}</td>
+        </tr>"""
+
+    rule_rows = "".join(row(h) for h in rule_hits) or "<tr><td colspan='5' style='padding:8px;'>None</td></tr>"
+    ml_rows = "".join(row(h, is_ml=True) for h in ml_hits) or "<tr><td colspan='5' style='padding:8px;'>None</td></tr>"
+
+    report_time_ist = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST")
+
+    html = f"""
+    <html>
+    <body style="font-family: Arial, sans-serif; color:#333;">
+        <h2 style="color:#c0392b;">🚨 New Threat Activity Detected — DVWA Monitoring</h2>
+        <p>Report generated: {report_time_ist}</p>
+
+        <h3>Rule-Based Detections (Logstash) — {len(rule_hits)} new</h3>
+        <table style="border-collapse:collapse;width:100%;font-size:13px;">
+            <tr style="background:#f2f2f2;">
+                <th style="padding:6px;border:1px solid #ddd;">Timestamp</th>
+                <th style="padding:6px;border:1px solid #ddd;">Source IP</th>
+                <th style="padding:6px;border:1px solid #ddd;">Request</th>
+                <th style="padding:6px;border:1px solid #ddd;">Tags</th>
+                <th style="padding:6px;border:1px solid #ddd;">ML Score</th>
+            </tr>
+            {rule_rows}
+        </table>
+
+        <h3 style="margin-top:24px;">ML-Flagged Anomalies (IsolationForest) — {len(ml_hits)} new</h3>
+        <table style="border-collapse:collapse;width:100%;font-size:13px;">
+            <tr style="background:#f2f2f2;">
+                <th style="padding:6px;border:1px solid #ddd;">Timestamp</th>
+                <th style="padding:6px;border:1px solid #ddd;">Source IP</th>
+                <th style="padding:6px;border:1px solid #ddd;">Request</th>
+                <th style="padding:6px;border:1px solid #ddd;">Tags</th>
+                <th style="padding:6px;border:1px solid #ddd;">ML Score</th>
+            </tr>
+            {ml_rows}
+        </table>
+
+        <p style="margin-top:24px;color:#777;font-size:12px;">
+            Automated alert from your AI Threat Detection pipeline.
+        </p>
+    </body>
+    </html>
+    """
+    return html
+
+
+def send_email(html_content, total_new):
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"🚨 SIEM Alert: {total_new} New Threat Event(s) Detected"
+    msg["From"] = SENDER_EMAIL
+    msg["To"] = RECIPIENT_EMAIL
+    msg.attach(MIMEText(html_content, "html"))
+
+    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+        server.starttls()
+        server.login(SENDER_EMAIL, SENDER_APP_PASSWORD)
+        server.sendmail(SENDER_EMAIL, RECIPIENT_EMAIL, msg.as_string())
+
+
+def run_alert_check():
+    validate_config()
+
+    last_checked = get_last_checked_time()
+    now = datetime.now(timezone.utc).isoformat()
+
+    rule_hits = fetch_new_attacks(last_checked)
+    ml_hits = fetch_new_ml_anomalies(last_checked)
+
+    total_new = len(rule_hits) + len(ml_hits)
+
+    if total_new == 0:
+        print(f"[i] No new threats since {last_checked}. Nothing to send.")
+        save_last_checked_time(now)
+        return
+
+    print(f"[+] Found {len(rule_hits)} rule-based hits and {len(ml_hits)} ML anomalies. Sending email...")
+    html_report = build_html_report(rule_hits, ml_hits)
+
+    try:
+        send_email(html_report, total_new)
+        print("[✔] Alert email sent successfully.")
+    except Exception as e:
+        print(f"[-] Failed to send email: {e}")
+        return  # don't update state if email failed, so we retry next run
+
+    save_last_checked_time(now)
+
+
+if __name__ == "__main__":
+    run_alert_check()

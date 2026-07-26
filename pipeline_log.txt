@@ -1,0 +1,7 @@
+[+] Found 3 rule-based hits and 1 ML anomalies. Sending email...
+[✔] Alert email sent successfully.
+[i] No new threats since 2026-07-26T16:55:03.368621+00:00. Nothing to send.
+[i] No new threats since 2026-07-26T17:03:00.591608+00:00. Nothing to send.
+[i] No new threats since 2026-07-26T17:06:36.861293+00:00. Nothing to send.
+[+] Found 1 rule-based hits and 1 ML anomalies. Sending email...
+[✔] Alert email sent successfully.
