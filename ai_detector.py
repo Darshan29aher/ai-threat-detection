@@ -69,7 +69,7 @@ def run_ai_detection():
 
         all_docs = []
         clean_docs = []
-        attack_tags = {'xss_attempt', 'sqli_attempt', 'brute_force_attempt', 'csrf_attempt'}
+        attack_tags = {'xss_attempt', 'sqli_attempt', 'brute_force_attempt', 'csrf_attempt', 'lfi_attempt'}
 
         for hit in hits:
             source = hit['_source']
