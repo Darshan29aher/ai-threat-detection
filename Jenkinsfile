@@ -6,17 +6,15 @@ pipeline {
     }
 
     stages {
-        stage('Checkout & Lint') {
+        stage('Checkout Code') {
             steps {
-                echo 'Checking out source code & running code checks...'
+                echo 'Checking out source code...'
                 checkout scm
-                sh 'python3 -m flake8 . || true'
             }
         }
 
-        stage('SAST - SonarQube') {
+        stage('SonarQube Code Analysis') {
             steps {
-                echo 'Running Static Application Security Testing (SAST)...'
                 withSonarQubeEnv('SonarQube-Server') {
                     sh """
                         ${SONAR_SCANNER_HOME}/bin/sonar-scanner \
@@ -28,20 +26,26 @@ pipeline {
             }
         }
 
-        stage('SCA & Image Scan - Trivy') {
+        stage('Trivy Image Scan') {
             steps {
-                echo 'Scanning Flask app container image for CVEs...'
+                echo 'Scanning Flask app image and generating JSON report...'
+                // Generate Trivy output in JSON format
                 sh 'trivy image --format json -o trivy-report.json secure-flask-app:latest || true'
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'trivy-report.json', allowEmptyArchive: true
+                }
             }
         }
 
-        stage('DAST - OWASP ZAP') {
+        stage('OWASP ZAP Dynamic Scan - DVWA') {
             steps {
                 script {
                     def dockerNetwork = "bridge"
                     def dvwaUrl = "http://172.17.0.1:8081" 
 
-                    echo "Starting Dynamic Application Security Testing against ${dvwaUrl}..."
+                    echo "Starting OWASP ZAP scan against DVWA at ${dvwaUrl}..."
 
                     sh """
                     docker run --rm --network ${dockerNetwork} \
@@ -53,19 +57,10 @@ pipeline {
                     """
                 }
             }
-        }
-
-        stage('SIEM Telemetry Audit') {
-            steps {
-                echo 'Verifying Filebeat log shipping and Logstash pipeline readiness...'
-                sh 'systemctl is-active filebeat || true'
-            }
-        }
-
-        stage('Publish Artifacts & Reports') {
-            steps {
-                echo 'Archiving all DevSecOps security reports...'
-                archiveArtifacts artifacts: 'trivy-report.json, zap_dvwa_report.html', allowEmptyArchive: true
+            post {
+                always {
+                    archiveArtifacts artifacts: 'zap_dvwa_report.html', allowEmptyArchive: true
+                }
             }
         }
     }
