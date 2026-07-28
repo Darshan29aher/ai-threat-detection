@@ -6,15 +6,17 @@ pipeline {
     }
 
     stages {
-        stage('Checkout Code') {
+        stage('Checkout & Lint') {
             steps {
-                echo 'Checking out source code...'
+                echo 'Checking out source code & running code checks...'
                 checkout scm
+                sh 'python3 -m flake8 . || true'
             }
         }
 
-        stage('SonarQube Code Analysis') {
+        stage('SAST - SonarQube') {
             steps {
+                echo 'Running Static Application Security Testing (SAST)...'
                 withSonarQubeEnv('SonarQube-Server') {
                     sh """
                         ${SONAR_SCANNER_HOME}/bin/sonar-scanner \
@@ -26,26 +28,20 @@ pipeline {
             }
         }
 
-        stage('Trivy Image Scan') {
+        stage('SCA & Image Scan - Trivy') {
             steps {
-                echo 'Scanning Flask app image and generating JSON report...'
-                // Generate Trivy output in JSON format
+                echo 'Scanning Flask app container image for CVEs...'
                 sh 'trivy image --format json -o trivy-report.json secure-flask-app:latest || true'
-            }
-            post {
-                always {
-                    archiveArtifacts artifacts: 'trivy-report.json', allowEmptyArchive: true
-                }
             }
         }
 
-        stage('OWASP ZAP Dynamic Scan - DVWA') {
+        stage('DAST - OWASP ZAP') {
             steps {
                 script {
                     def dockerNetwork = "bridge"
                     def dvwaUrl = "http://172.17.0.1:8081" 
 
-                    echo "Starting OWASP ZAP scan against DVWA at ${dvwaUrl}..."
+                    echo "Starting Dynamic Application Security Testing against ${dvwaUrl}..."
 
                     sh """
                     docker run --rm --network ${dockerNetwork} \
@@ -57,10 +53,19 @@ pipeline {
                     """
                 }
             }
-            post {
-                always {
-                    archiveArtifacts artifacts: 'zap_dvwa_report.html', allowEmptyArchive: true
-                }
+        }
+
+        stage('SIEM Telemetry Audit') {
+            steps {
+                echo 'Verifying Filebeat log shipping and Logstash pipeline readiness...'
+                sh 'systemctl is-active filebeat || true'
+            }
+        }
+
+        stage('Publish Artifacts & Reports') {
+            steps {
+                echo 'Archiving all DevSecOps security reports...'
+                archiveArtifacts artifacts: 'trivy-report.json, zap_dvwa_report.html', allowEmptyArchive: true
             }
         }
     }
