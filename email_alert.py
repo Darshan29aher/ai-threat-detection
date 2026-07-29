@@ -22,7 +22,7 @@ raw_recipients = os.getenv("RECIPIENT_EMAIL", "")
 RECIPIENT_EMAIL = [email.strip() for email in raw_recipients.split(",") if email.strip()]
 # ---------------------------------------------------
 
-STATE_FILE = "/home/iacsd/ai-threat-detection/last_alert_state.json"
+STATE_FILE = "last_alert_state.json"
 ATTACK_TAGS = ["xss_attempt", "sqli_attempt", "brute_force_attempt", "csrf_attempt", "lfi_attempt"]
 
 # IST is UTC+5:30 — used ONLY for display; all internal comparisons stay in UTC
